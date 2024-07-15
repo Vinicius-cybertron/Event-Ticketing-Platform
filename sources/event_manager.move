@@ -215,22 +215,6 @@ module event_manager::event_manager {
         assert!(ticket_id.event_id == object::id(event_id), EInvalidCall); // Check ticket ownership
     }
 
-    // Entry function for reselling tickets
-    public entry fun resell_ticket(
-        ticket_id: &mut Ticket,
-        new_owner: address,
-        amount: Coin<SUI>,
-        event_id: &mut Event,
-        ctx: &mut TxContext
-    ) {
-        // Check if the ticket price is met
-        assert!(coin::value(&amount) >= event_id.ticket_price, EInsufficientFunds);
-        assert!(ticket_id.owner == ctx.sender(), EInvalidCall); // Ensure the ticket owner is the seller
-
-        ticket_id.owner = new_owner; // Change ownership of the ticket
-        balance::join(&mut event_id.balance, coin::into_balance(amount)); // Update ticket sales
-    }
-
     // Entry function for participants to register for an event
     public entry fun register_for_event(
         event_id: &mut Event,
