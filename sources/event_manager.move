@@ -6,7 +6,6 @@ module event_manager::event_manager {
     use sui::balance::{Balance, Self, zero};
     use sui::sui::SUI;
     use sui::clock::{Clock, timestamp_ms};
-    use sui::tx_context::sender;
 
     // Error codes for different scenarios
     const EInsufficientFunds: u64 = 1;
