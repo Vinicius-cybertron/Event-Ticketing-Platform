@@ -76,7 +76,7 @@ module event_manager::event_manager {
     fun init(ctx: &mut TxContext) {
         transfer::transfer(AdminCap {
             id: object::new(ctx)
-        }, sender(ctx));
+        }, ctx.sender());
     }
 
     // Entry function to create a new event
@@ -157,7 +157,7 @@ module event_manager::event_manager {
         let ticket = Ticket {
             id: object::new(ctx),
             event_id: object::id(event_id),
-            owner: sender(ctx),
+            owner: ctx.sender(),
             refund: false,
         };
 
@@ -167,14 +167,14 @@ module event_manager::event_manager {
         // Emit an event when a ticket is minted
         event::emit(TicketMintedEvent {
             object_id: object::id(&ticket),
-            owner: sender(ctx),
+            owner: ctx.sender(),
             event_id: object::id(event_id),
             event_name: event_id.event_name,
             ticket_price: event_id.ticket_price,
         });
 
         // Transfer the ticket to the buyer
-        transfer::transfer(ticket, sender(ctx));
+        transfer::transfer(ticket, ctx.sender());
     }
 
     // Entry function for admins to refund tickets
@@ -214,7 +214,7 @@ module event_manager::event_manager {
     ) {
         // Check if the ticket price is met
         assert!(coin::value(&amount) >= event_id.ticket_price, EInsufficientFunds);
-        assert!(ticket_id.owner == sender(ctx), EInvalidCall); // Ensure the ticket owner is the seller
+        assert!(ticket_id.owner == ctx.sender(), EInvalidCall); // Ensure the ticket owner is the seller
 
         ticket_id.owner = new_owner; // Change ownership of the ticket
         balance::join(&mut event_id.sold_tickets, coin::into_balance(amount)); // Update ticket sales
@@ -346,7 +346,7 @@ module event_manager::event_manager {
         _event_id: &mut EventDetails,
         ctx: &mut TxContext
     ) {
-        transfer::public_transfer(amount, sender(ctx)); // Transfer funds to the sender
+        transfer::public_transfer(amount, ctx.sender()); // Transfer funds to the sender
     }
 
     // Function to list all events
