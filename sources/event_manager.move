@@ -1,5 +1,5 @@
 module event_manager::event_manager {
-    
+
     use std::string::{String, utf8, append};
     use sui::event;
     use sui::coin::{Coin, Self};
@@ -341,15 +341,6 @@ module event_manager::event_manager {
         _message: vector<u8>
     ): bool {
         true // Placeholder for actual authentication logic
-    }
-
-    // Entry function to transfer funds
-    public entry fun transfer_funds(
-        amount: Coin<SUI>,
-        _event_id: &mut Event,
-        ctx: &mut TxContext
-    ) {
-        transfer::public_transfer(amount, ctx.sender()); // Transfer funds to the sender
     }
 
     // Function to list all events
