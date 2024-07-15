@@ -204,6 +204,15 @@ module event_manager::event_manager {
         transfer::public_transfer(coin, owner);
     }
 
+    public fun withdraw(
+        cap: &EventCap,
+        self: &mut Event,
+        ctx: &mut TxContext
+    ) : Coin<SUI> {
+        assert!(cap.`for` == object::id(self), EAdminOnly);
+        coin::from_balance( self.balance.withdraw_all(), ctx)
+    }
+
     // Entry function to validate a ticket
     public entry fun validate_ticket(
         ticket_id: &Ticket,
