@@ -9,8 +9,8 @@ This decentralized platform, built on the Sui Move blockchain, facilitates the c
 ### AdminCap
 - **AdminCap**: Structure representing the administrative capabilities, containing a unique identifier (UID).
 
-### EventDetails
-- **EventDetails**: Structure containing detailed information about an event, such as the event name, details, ticket price, total tickets, sold tickets, start and end times.
+### Event
+- **Event**: Structure containing detailed information about an event, such as the event name, details, ticket price, total tickets, sold tickets, start and end times.
 
 ### Ticket
 - **Ticket**: Structure representing a ticket for an event, including event ID, owner address, and refund status.
