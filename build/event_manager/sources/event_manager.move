@@ -7,6 +7,8 @@ module event_manager::event_manager {
     use sui::sui::SUI;
     use sui::clock::{Clock, timestamp_ms};
     use sui::tx_context::sender;
+    use sui::transfer;
+    use sui::object::{ID, UID, new};
 
     // Error codes for different scenarios
     const EInsufficientFunds: u64 = 1;
@@ -74,8 +76,8 @@ module event_manager::event_manager {
 
     // Initialization function for the module
     fun init(ctx: &mut TxContext) {
-        transfer::transfer(AdminCap {
-            id: object::new(ctx)
+        transfer::public_transfer(AdminCap {
+            id: new(ctx)
         }, sender(ctx));
     }
 
@@ -91,7 +93,7 @@ module event_manager::event_manager {
         ctx: &mut TxContext
     ) {
         let event_details = EventDetails {
-            id: object::new(ctx),
+            id: new(ctx),
             event_name: event_name,
             event_details: event_details,
             ticket_price,
@@ -111,7 +113,7 @@ module event_manager::event_manager {
         });
 
         // Share the newly created event
-        transfer::share_object(event_details);
+        transfer::public_share_object(event_details);
     }
 
     // Entry function to update event details by admin
@@ -129,10 +131,18 @@ module event_manager::event_manager {
     public entry fun cancel_event(
         admin: &AdminCap,
         event_id: &mut EventDetails,
-        _ctx: &mut TxContext
+        ctx: &mut TxContext
     ) {
         // Ensure that only the admin can cancel the event
         assert!(object::id(admin) == object::id(event_id), EAdminOnly);
+
+        // Refund all tickets
+        let refund_amount = balance::value(&event_id.sold_tickets);
+        if refund_amount > 0 {
+            let refund_coin = coin::from_balance(balance::split(&mut event_id.sold_tickets, refund_amount), ctx);
+            transfer::public_transfer(refund_coin, sender(ctx));
+        }
+
         event::emit(EventCreatedEvent {
             event_id: object::id(event_id),
             event_name: event_id.event_name,
@@ -140,6 +150,9 @@ module event_manager::event_manager {
             ticket_price: event_id.ticket_price,
             total_tickets: event_id.total_tickets,
         });
+
+        // Delete the event
+        transfer::public_delete(event_id);
     }
 
     // Entry function for users to buy tickets
@@ -155,7 +168,7 @@ module event_manager::event_manager {
 
         // Create a new ticket
         let ticket = Ticket {
-            id: object::new(ctx),
+            id: new(ctx),
             event_id: object::id(event_id),
             owner: sender(ctx),
             refund: false,
@@ -174,7 +187,7 @@ module event_manager::event_manager {
         });
 
         // Transfer the ticket to the buyer
-        transfer::transfer(ticket, sender(ctx));
+        transfer::public_transfer(ticket, sender(ctx));
     }
 
     // Entry function for admins to refund tickets
@@ -190,7 +203,7 @@ module event_manager::event_manager {
 
         ticket_id.refund = true; // Mark ticket as refunded
         let amount = coin::from_balance(balance::split(&mut event_id.sold_tickets, event_id.ticket_price), ctx);
-        transfer_funds(amount, event_id, ctx); // Transfer funds back to the user
+        transfer::public_transfer(amount, ticket_id.owner); // Transfer funds back to the user
     }
 
     // Entry function to validate a ticket
@@ -293,30 +306,32 @@ module event_manager::event_manager {
     public fun generate_event_report(
         event_id: &EventDetails
     ): String {
-        let _attendance = get_event_attendance(event_id); // Get attendance
-        let _sales = get_ticket_sales(event_id); // Get sales
+        let attendance = get_event_attendance(event_id); // Get attendance
+        let sales = get_ticket_sales(event_id); // Get sales
         let mut report = utf8(b"Event Report:\n");
         append(&mut report, utf8(b"Event Name: "));
         append(&mut report, event_id.event_name);
         append(&mut report, utf8(b"\nTotal Tickets: "));
+        append(&mut report, event_id.total_tickets.to_string());
         append(&mut report, utf8(b"\nSold Tickets: "));
+        append(&mut report, attendance.to_string());
         append(&mut report, utf8(b"\nTicket Sales: "));
+        append(&mut report, sales.to_string());
         report // Return the report string
     }
 
     // Entry function to register a user profile
     public entry fun register_profile(
         user_address: address,
-        _public_key: vector<u8>,
         ctx: &mut TxContext
     ) {
         let profile = Profile {
-            id: object::new(ctx),
+            id: new(ctx),
             user_address,
             verified: false,
             reputation_score: 0,
         };
-        transfer::transfer(profile, user_address); // Transfer profile to the user
+        transfer::public_transfer(profile, user_address); // Transfer profile to the user
     }
 
     // Function to verify a user profile by admin
@@ -354,5 +369,27 @@ module event_manager::event_manager {
         events: vector<EventDetails>
     ): vector<EventDetails> {
         events // Return the list of events
+    }
+
+    // Function to get event details
+    public fun get_event_details(
+        event_id: &EventDetails
+    ): String {
+        let mut details = utf8(b"Event Details:\n");
+        append(&mut details, utf8(b"Event Name: "));
+        append(&mut details, event_id.event_name);
+        append(&mut details, utf8(b"\nEvent Description: "));
+        append(&mut details, event_id.event_details);
+        append(&mut details, utf8(b"\nTicket Price: "));
+        append(&mut details, event_id.ticket_price.to_string());
+        append(&mut details, utf8(b"\nTotal Tickets: "));
+        append(&mut details, event_id.total_tickets.to_string());
+        append(&mut details, utf8(b"\nSold Tickets: "));
+        append(&mut details, balance::value(&event_id.sold_tickets).to_string());
+        append(&mut details, utf8(b"\nEvent Start Time: "));
+        append(&mut details, event_id.event_start_time.to_string());
+        append(&mut details, utf8(b"\nEvent End Time: "));
+        append(&mut details, event_id.event_end_time.to_string());
+        details // Return the details string
     }
 }
