@@ -1,12 +1,11 @@
 module event_manager::event_manager {
-    
+
     use std::string::{String, utf8, append};
     use sui::event;
     use sui::coin::{Coin, Self};
     use sui::balance::{Balance, Self, zero};
     use sui::sui::SUI;
     use sui::clock::{Clock, timestamp_ms};
-    use sui::tx_context::sender;
 
     // Error codes for different scenarios
     const EInsufficientFunds: u64 = 1;
@@ -20,15 +19,21 @@ module event_manager::event_manager {
     public struct AdminCap has key { id: UID }
 
     // Structure for Event details
-    public struct EventDetails has key, store {
+    public struct Event has key, store {
         id: UID,
         event_name: String,
         event_details: String,
         ticket_price: u64,
         total_tickets: u64,
-        sold_tickets: Balance<SUI>,
+        sold_tickets: u64,
+        balance: Balance<SUI>,
         event_start_time: u64,
         event_end_time: u64,
+    }
+
+    public struct EventCap has key {
+        id: UID,
+        `for`: ID
     }
 
     // Structure for Ticket information
@@ -76,7 +81,7 @@ module event_manager::event_manager {
     fun init(ctx: &mut TxContext) {
         transfer::transfer(AdminCap {
             id: object::new(ctx)
-        }, sender(ctx));
+        }, ctx.sender());
     }
 
     // Entry function to create a new event
@@ -90,15 +95,21 @@ module event_manager::event_manager {
         clock: &Clock,
         ctx: &mut TxContext
     ) {
-        let event_details = EventDetails {
+        let event_details = Event {
             id: object::new(ctx),
             event_name: event_name,
             event_details: event_details,
             ticket_price,
             total_tickets,
-            sold_tickets: zero<SUI>(),
-            event_start_time: timestamp_ms(clock) + start_time,
-            event_end_time: timestamp_ms(clock) + end_time,
+            sold_tickets: 0,
+            balance: zero<SUI>(),
+            event_start_time: clock.timestamp_ms() + start_time,
+            event_end_time: clock.timestamp_ms() + end_time,
+        };
+
+        let cap = EventCap{
+            id: object::new(ctx),
+            `for`: object::id(&event_details)
         };
 
         // Emit an event when a new event is created
@@ -109,94 +120,102 @@ module event_manager::event_manager {
             ticket_price: event_details.ticket_price,
             total_tickets: event_details.total_tickets,
         });
-
+        // transfer the cap
+        transfer::transfer(cap, ctx.sender());
         // Share the newly created event
         transfer::share_object(event_details);
     }
 
     // Entry function to update event details by admin
     public entry fun update_event_details(
-        admin: &AdminCap,
-        event_id: &mut EventDetails,
+        cap: &EventCap,
+        event: &mut Event,
         new_details: String
     ) {
         // Ensure that only the admin can update event details
-        assert!(object::id(admin) == object::id(event_id), EAdminOnly);
-        event_id.event_details = new_details;
+        assert!(cap.`for` == object::id(event), EAdminOnly);
+        event.event_details = new_details;
     }
 
     // Entry function to cancel an event
     public entry fun cancel_event(
-        admin: &AdminCap,
-        event_id: &mut EventDetails,
-        _ctx: &mut TxContext
+        cap: &EventCap,
+        self: &mut Event,
     ) {
         // Ensure that only the admin can cancel the event
-        assert!(object::id(admin) == object::id(event_id), EAdminOnly);
+        assert!(cap.`for` == object::id(self), EAdminOnly);
         event::emit(EventCreatedEvent {
-            event_id: object::id(event_id),
-            event_name: event_id.event_name,
+            event_id: object::id(self),
+            event_name: self.event_name,
             event_details: utf8(b"Event Cancelled"),
-            ticket_price: event_id.ticket_price,
-            total_tickets: event_id.total_tickets,
+            ticket_price: self.ticket_price,
+            total_tickets: self.total_tickets,
         });
     }
 
     // Entry function for users to buy tickets
     public entry fun buy_ticket(
-        event_id: &mut EventDetails,
+        self: &mut Event,
         amount: Coin<SUI>,
         ctx: &mut TxContext
     ) {
         // Check if the user has sufficient funds
-        assert!(coin::value(&amount) >= event_id.ticket_price, EInsufficientFunds);
+        assert!(amount.value() >= self.ticket_price, EInsufficientFunds);
         // Ensure the event has not reached its total ticket limit
-        assert!(balance::value(&event_id.sold_tickets) < event_id.total_tickets, EFundingReached);
-
+        assert!(self.sold_tickets < self.total_tickets, EFundingReached);
+        self.sold_tickets = self.sold_tickets + 1;
         // Create a new ticket
         let ticket = Ticket {
             id: object::new(ctx),
-            event_id: object::id(event_id),
-            owner: sender(ctx),
+            event_id: object::id(self),
+            owner: ctx.sender(),
             refund: false,
         };
 
         // Update the sold tickets balance
-        balance::join(&mut event_id.sold_tickets, coin::into_balance(amount));
+        self.balance.join(amount.into_balance());
 
         // Emit an event when a ticket is minted
         event::emit(TicketMintedEvent {
             object_id: object::id(&ticket),
-            owner: sender(ctx),
-            event_id: object::id(event_id),
-            event_name: event_id.event_name,
-            ticket_price: event_id.ticket_price,
+            owner: ctx.sender(),
+            event_id: object::id(self),
+            event_name: self.event_name,
+            ticket_price: self.ticket_price,
         });
 
         // Transfer the ticket to the buyer
-        transfer::transfer(ticket, sender(ctx));
+        transfer::transfer(ticket, ctx.sender());
     }
 
     // Entry function for admins to refund tickets
     public entry fun refund_ticket(
-        admin: &AdminCap,
-        ticket_id: &mut Ticket,
-        event_id: &mut EventDetails,
+        self: &mut Event,
+        ticket: Ticket,
         ctx: &mut TxContext
     ) {
-        // Ensure only the admin can initiate a refund
-        assert!(object::id(admin) == object::id(event_id), EAdminOnly);
-        assert!(!ticket_id.refund, EInvalidCall); // Check if ticket is already refunded
+        assert!(ticket.event_id == object::id(self), EInvalidCall); // Check if ticket is already refunded
 
-        ticket_id.refund = true; // Mark ticket as refunded
-        let amount = coin::from_balance(balance::split(&mut event_id.sold_tickets, event_id.ticket_price), ctx);
-        transfer_funds(amount, event_id, ctx); // Transfer funds back to the user
+        let owner = destroy_ticket(ticket);
+
+        let coin = coin::take(&mut self.balance, self.ticket_price, ctx);
+
+        transfer::public_transfer(coin, owner);
+    }
+
+    public fun withdraw(
+        cap: &EventCap,
+        self: &mut Event,
+        ctx: &mut TxContext
+    ) : Coin<SUI> {
+        assert!(cap.`for` == object::id(self), EAdminOnly);
+        coin::from_balance( self.balance.withdraw_all(), ctx)
     }
 
     // Entry function to validate a ticket
     public entry fun validate_ticket(
         ticket_id: &Ticket,
-        event_id: &EventDetails,
+        event_id: &Event,
         clock: &Clock
     ) {
         // Ensure the event is currently active
@@ -204,25 +223,9 @@ module event_manager::event_manager {
         assert!(ticket_id.event_id == object::id(event_id), EInvalidCall); // Check ticket ownership
     }
 
-    // Entry function for reselling tickets
-    public entry fun resell_ticket(
-        ticket_id: &mut Ticket,
-        new_owner: address,
-        amount: Coin<SUI>,
-        event_id: &mut EventDetails,
-        ctx: &mut TxContext
-    ) {
-        // Check if the ticket price is met
-        assert!(coin::value(&amount) >= event_id.ticket_price, EInsufficientFunds);
-        assert!(ticket_id.owner == sender(ctx), EInvalidCall); // Ensure the ticket owner is the seller
-
-        ticket_id.owner = new_owner; // Change ownership of the ticket
-        balance::join(&mut event_id.sold_tickets, coin::into_balance(amount)); // Update ticket sales
-    }
-
     // Entry function for participants to register for an event
     public entry fun register_for_event(
-        event_id: &mut EventDetails,
+        event_id: &mut Event,
         participant: &mut Participant
     ) {
         // Check if the participant is not already registered
@@ -232,7 +235,7 @@ module event_manager::event_manager {
 
     // Entry function for participants to check-in
     public entry fun check_in(
-        event_id: &EventDetails,
+        event_id: &Event,
         participant: &Participant
     ) {
         assert!(vector::contains(&participant.registered_events, &object::id(event_id)), ENotRegistered); // Ensure participant is registered
@@ -240,7 +243,7 @@ module event_manager::event_manager {
 
     // Entry function for participants to rate an event
     public entry fun rate_event(
-        event_id: &EventDetails,
+        event_id: &Event,
         _rating: u64,
         participant: &Participant
     ) {
@@ -256,7 +259,7 @@ module event_manager::event_manager {
 
     // Entry function for participants to subscribe to event notifications
     public entry fun subscribe_to_event_notifications(
-        event_id: &EventDetails,
+        event_id: &Event,
         participant: &mut Participant
     ) {
         let notification = utf8(b"Subscribed to notifications for event: ");
@@ -268,7 +271,7 @@ module event_manager::event_manager {
 
     // Entry function to send notifications to participants
     public entry fun send_notification(
-        _event_id: &EventDetails,
+        _event_id: &Event,
         participant: &mut Participant,
         message: String
     ) {
@@ -277,21 +280,21 @@ module event_manager::event_manager {
 
     // Function to get the attendance of an event
     public fun get_event_attendance(
-        event_id: &EventDetails
+        event_id: &Event
     ): u64 {
-        balance::value(&event_id.sold_tickets) // Return the number of sold tickets
+        balance::value(&event_id.balance) // Return the number of sold tickets
     }
 
     // Function to calculate total ticket sales for an event
     public fun get_ticket_sales(
-        event_id: &EventDetails
+        event_id: &Event
     ): u64 {
-        event_id.ticket_price * balance::value(&event_id.sold_tickets) // Return total sales
+        event_id.ticket_price * balance::value(&event_id.balance) // Return total sales
     }
 
     // Function to generate an event report
     public fun generate_event_report(
-        event_id: &EventDetails
+        event_id: &Event
     ): String {
         let _attendance = get_event_attendance(event_id); // Get attendance
         let _sales = get_ticket_sales(event_id); // Get sales
@@ -340,19 +343,21 @@ module event_manager::event_manager {
         true // Placeholder for actual authentication logic
     }
 
-    // Entry function to transfer funds
-    public entry fun transfer_funds(
-        amount: Coin<SUI>,
-        _event_id: &mut EventDetails,
-        ctx: &mut TxContext
-    ) {
-        transfer::public_transfer(amount, sender(ctx)); // Transfer funds to the sender
-    }
-
     // Function to list all events
     public fun list_events(
-        events: vector<EventDetails>
-    ): vector<EventDetails> {
+        events: vector<Event>
+    ): vector<Event> {
         events // Return the list of events
+    }
+
+    fun destroy_ticket(self: Ticket) : address {
+        let Ticket {
+            id,
+            event_id: _,
+            owner,
+            refund: _
+        } = self;
+        id.delete();
+        owner
     }
 }
